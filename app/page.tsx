@@ -21,6 +21,8 @@ export default function AdminDashboard() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [serviceFilter, setServiceFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const router = useRouter()
@@ -71,7 +73,7 @@ export default function AdminDashboard() {
   // Reset page to 1 when filters change
   useEffect(() => {
     setCurrentPage(1)
-  }, [statusFilter, serviceFilter, search])
+  }, [statusFilter, serviceFilter, search, dateFrom, dateTo])
 
   const filtered = leads.filter((l) => {
     if (statusFilter !== 'all' && l.status !== statusFilter) return false
@@ -80,8 +82,23 @@ export default function AdminDashboard() {
       const q = search.toLowerCase()
       if (!l.name.toLowerCase().includes(q) && !l.phone.includes(q)) return false
     }
+    if (dateFrom) {
+      const from = new Date(dateFrom)
+      from.setHours(0, 0, 0, 0)
+      if (new Date(l.created_at) < from) return false
+    }
+    if (dateTo) {
+      const to = new Date(dateTo)
+      to.setHours(23, 59, 59, 999)
+      if (new Date(l.created_at) > to) return false
+    }
     return true
   })
+
+  const formatDisplayDate = (iso: string) =>
+    new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+
+  const hasDateFilter = dateFrom || dateTo
 
   const totalPages = Math.ceil(filtered.length / pageSize) || 1
   const startIndex = (currentPage - 1) * pageSize
@@ -191,8 +208,9 @@ export default function AdminDashboard() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap gap-3">
-          <div className="relative flex-1 min-w-48">
+        <div className="space-y-3">
+          {/* Search — commented out for now */}
+          {/* <div className="relative">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
             <input
               id="admin-search"
@@ -201,25 +219,153 @@ export default function AdminDashboard() {
               placeholder="Search by name or phone…"
               className="input-dark pl-9"
             />
+          </div> */}
+
+          {/* All filters in one row — explicit equal height on every control */}
+          <div className="flex flex-wrap items-center gap-2">
+
+            {/* Status */}
+            <select
+              id="admin-status-filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              style={{
+                height: '40px',
+                background: '#1a1a1a',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: '8px',
+                color: '#fff',
+                padding: '0 36px 0 12px',
+                fontSize: '13px',
+                outline: 'none',
+                cursor: 'pointer',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                minWidth: '140px',
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+                backgroundRepeat: 'no-repeat',
+                backgroundPosition: 'right 10px center',
+              }}
+            >
+              <option value="all" style={{ background: '#111' }}>All Status</option>
+              {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value} style={{ background: '#111' }}>{s.label}</option>)}
+            </select>
+
+            {/* Service */}
+            <select
+              id="admin-service-filter"
+              value={serviceFilter}
+              onChange={(e) => setServiceFilter(e.target.value)}
+              style={{
+                height: '40px',
+                background: '#1a1a1a',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: '8px',
+                color: '#fff',
+                padding: '0 36px 0 12px',
+                fontSize: '13px',
+                outline: 'none',
+                cursor: 'pointer',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                minWidth: '148px',
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+                backgroundRepeat: 'no-repeat',
+                backgroundPosition: 'right 10px center',
+              }}
+            >
+              <option value="all" style={{ background: '#111' }}>All Services</option>
+              {services.map((s) => <option key={s} value={s} style={{ background: '#111' }}>{s}</option>)}
+            </select>
+
+            {/* Divider */}
+            <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)' }} />
+
+            {/* From date */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>From</span>
+              <input
+                id="admin-date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                style={{
+                  height: '40px',
+                  background: '#1a1a1a',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  padding: '0 10px',
+                  fontSize: '13px',
+                  outline: 'none',
+                  colorScheme: 'dark',
+                  width: 'auto',
+                }}
+              />
+            </div>
+
+            {/* To date */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>To</span>
+              <input
+                id="admin-date-to"
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                style={{
+                  height: '40px',
+                  background: '#1a1a1a',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: '8px',
+                  color: '#fff',
+                  padding: '0 10px',
+                  fontSize: '13px',
+                  outline: 'none',
+                  colorScheme: 'dark',
+                  width: 'auto',
+                }}
+              />
+            </div>
+
+            {/* Clear dates button */}
+            {hasDateFilter && (
+              <button
+                id="admin-clear-dates"
+                onClick={() => { setDateFrom(''); setDateTo('') }}
+                style={{
+                  height: '40px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  color: '#c9a84c',
+                  border: '1px solid rgba(201,168,76,0.35)',
+                  borderRadius: '8px',
+                  padding: '0 14px',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap',
+                  transition: 'background 0.2s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(201,168,76,0.08)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                ✕ Clear dates
+              </button>
+            )}
           </div>
-          <select
-            id="admin-status-filter"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="select-dark w-auto min-w-40"
-          >
-            <option value="all">All Status</option>
-            {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-          </select>
-          <select
-            id="admin-service-filter"
-            value={serviceFilter}
-            onChange={(e) => setServiceFilter(e.target.value)}
-            className="select-dark w-auto min-w-40"
-          >
-            <option value="all">All Services</option>
-            {services.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+
+          {/* Active date range banner */}
+          {hasDateFilter && (
+            <div className="flex items-center gap-2 text-xs text-[#c9a84c] bg-[#c9a84c]/10 border border-[#c9a84c]/20 rounded-lg px-4 py-2.5">
+              <span className="opacity-70">📅</span>
+              <span>
+                Showing leads
+                {dateFrom && <> from <strong>{formatDisplayDate(dateFrom)}</strong></>}
+                {dateTo && <> to <strong>{formatDisplayDate(dateTo)}</strong></>}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Table */}
