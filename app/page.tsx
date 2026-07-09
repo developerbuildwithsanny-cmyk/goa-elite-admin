@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/app/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { MessageCircle, Phone, Download, LogOut, RefreshCw, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { MessageCircle, Phone, Download, LogOut, RefreshCw, ChevronLeft, ChevronRight, MessageSquare, Save, X } from 'lucide-react'
 import type { Lead } from '@/app/types'
 
 const STATUS_OPTIONS = [
@@ -25,12 +25,13 @@ export default function AdminDashboard() {
   const [dateTo, setDateTo] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  const [editingComment, setEditingComment] = useState<string | null>(null)
+  const [commentDraft, setCommentDraft] = useState('')
+  const [savingComment, setSavingComment] = useState<string | null>(null)
   const router = useRouter()
 
-  console.log('[AdminDashboard] Rendering component...')
 
   const fetchLeads = useCallback(async () => {
-    console.log('[AdminDashboard] fetchLeads started')
     setLoading(true)
     try {
       const { data, error } = await supabase
@@ -38,11 +39,6 @@ export default function AdminDashboard() {
         .select('*')
         .order('created_at', { ascending: false })
       
-      console.log('[AdminDashboard] fetchLeads completed', {
-        success: !error,
-        count: data?.length ?? 0,
-        error: error,
-      })
       if (!error) setLeads(data ?? [])
     } catch (err) {
       console.error('[AdminDashboard] fetchLeads exception:', err)
@@ -51,21 +47,16 @@ export default function AdminDashboard() {
   }, [])
 
   useEffect(() => {
-    console.log('[AdminDashboard] mounted, fetching leads & setting up realtime channel')
     fetchLeads()
 
     const channel = supabase
       .channel('leads_realtime')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'leads' }, (payload) => {
-        console.log('[AdminDashboard] Realtime INSERT payload received:', payload)
         setLeads((prev) => [payload.new as Lead, ...prev])
       })
-      .subscribe((status) => {
-        console.log('[AdminDashboard] Realtime channel status:', status)
-      })
+      .subscribe()
 
     return () => {
-      console.log('[AdminDashboard] cleanup, removing realtime channel')
       supabase.removeChannel(channel)
     }
   }, [fetchLeads])
@@ -140,11 +131,33 @@ export default function AdminDashboard() {
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, status: status as Lead['status'] } : l)))
   }
 
+  const startEditComment = (lead: Lead) => {
+    setEditingComment(lead.id)
+    setCommentDraft(lead.admin_comment ?? '')
+  }
+
+  const cancelComment = () => {
+    setEditingComment(null)
+    setCommentDraft('')
+  }
+
+  const saveComment = async (id: string) => {
+    setSavingComment(id)
+    await supabase.from('leads').update({ admin_comment: commentDraft || null }).eq('id', id)
+    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, admin_comment: commentDraft || null } : l)))
+    setEditingComment(null)
+    setCommentDraft('')
+    setSavingComment(null)
+  }
+
   const exportCSV = () => {
-    const headers = ['Name', 'Phone', 'Alt Phone', 'Service', 'Message', 'Status', 'Date']
+    const headers = ['Name', 'Phone', 'Alt Phone', 'Service', 'Travel Date', 'Group Size', 'Message', 'Admin Comment', 'Status', 'Date']
     const rows = filtered.map((l) => [
       l.name, l.phone, l.alt_phone ?? '', l.service,
-      (l.message ?? '').replace(/,/g, ';'), l.status,
+      l.travel_date ?? '', l.group_size ?? '',
+      (l.message ?? '').replace(/,/g, ';'),
+      (l.admin_comment ?? '').replace(/,/g, ';'),
+      l.status,
       new Date(l.created_at).toLocaleDateString('en-IN'),
     ])
     const csv = [headers, ...rows].map((r) => r.join(',')).join('\n')
@@ -378,19 +391,21 @@ export default function AdminDashboard() {
                   <th className="text-left px-4 py-3">Name</th>
                   <th className="text-left px-4 py-3">Phone</th>
                   <th className="text-left px-4 py-3">Service</th>
+                  <th className="text-left px-4 py-3">Travel Date / Pax</th>
                   <th className="text-left px-4 py-3 max-w-xs">Message</th>
                   <th className="text-left px-4 py-3">Date</th>
                   <th className="text-left px-4 py-3">Status</th>
+                  <th className="text-left px-4 py-3 min-w-[200px]">Comment</th>
                   <th className="text-left px-4 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={8} className="text-center py-16 text-gray-500">Loading leads…</td></tr>
+                  <tr><td colSpan={10} className="text-center py-16 text-gray-500">Loading leads…</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={8} className="text-center py-16 text-gray-500">No leads found</td></tr>
+                  <tr><td colSpan={10} className="text-center py-16 text-gray-500">No leads found</td></tr>
                 ) : paginatedLeads.map((lead, index) => (
-                  <tr key={lead.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                  <tr key={lead.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors align-top">
                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">
                       {startIndex + index + 1}
                     </td>
@@ -412,6 +427,21 @@ export default function AdminDashboard() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-[#c9a84c] text-xs font-medium">{lead.service}</td>
+                    {/* Travel Date + Group Size */}
+                    <td className="px-4 py-3 text-xs">
+                      <div className="space-y-1">
+                        {lead.travel_date ? (
+                          <div className="text-gray-300 whitespace-nowrap">
+                            📅 {new Date(lead.travel_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                          </div>
+                        ) : (
+                          <span className="text-gray-600">—</span>
+                        )}
+                        {lead.group_size && (
+                          <div className="text-gray-400">👥 {lead.group_size} pax</div>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 text-gray-400 text-xs max-w-xs">
                       <span title={lead.message ?? ''} className="truncate block max-w-[180px]">
                         {lead.message || '—'}
@@ -433,6 +463,52 @@ export default function AdminDashboard() {
                           <option key={s.value} value={s.value} className="bg-[#111] text-white">{s.label}</option>
                         ))}
                       </select>
+                    </td>
+                    {/* Admin Comment cell */}
+                    <td className="px-4 py-3 min-w-[220px]">
+                      {editingComment === lead.id ? (
+                        <div className="space-y-2">
+                          <textarea
+                            rows={3}
+                            value={commentDraft}
+                            onChange={(e) => setCommentDraft(e.target.value)}
+                            placeholder="Add your note…"
+                            autoFocus
+                            className="w-full bg-[#0d0d0d] border border-[#c9a84c]/40 focus:border-[#c9a84c] text-white placeholder-gray-600 rounded-lg px-3 py-2 outline-none resize-none text-xs transition-colors"
+                          />
+                          <div className="flex gap-1.5">
+                            <button
+                              onClick={() => saveComment(lead.id)}
+                              disabled={savingComment === lead.id}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-[#c9a84c] text-black text-xs font-bold rounded-lg hover:bg-[#e8c97a] transition-colors disabled:opacity-50"
+                            >
+                              <Save size={11} />
+                              {savingComment === lead.id ? 'Saving…' : 'Save'}
+                            </button>
+                            <button
+                              onClick={cancelComment}
+                              className="flex items-center gap-1 px-3 py-1.5 bg-[#1a1a1a] border border-white/10 text-gray-400 text-xs rounded-lg hover:text-white transition-colors"
+                            >
+                              <X size={11} /> Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          onClick={() => startEditComment(lead)}
+                          className="group cursor-pointer rounded-lg px-2 py-1.5 hover:bg-white/5 transition-colors min-h-[36px] flex items-start gap-2"
+                          title="Click to edit comment"
+                        >
+                          {lead.admin_comment ? (
+                            <>
+                              <MessageSquare size={11} className="text-[#c9a84c] shrink-0 mt-0.5" />
+                              <span className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap break-words">{lead.admin_comment}</span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-700 group-hover:text-gray-500 transition-colors italic">+ Add comment</span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">

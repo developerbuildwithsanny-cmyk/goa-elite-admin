@@ -13,6 +13,9 @@ export interface Lead {
   alt_phone: string | null
   service: string
   message: string | null
+  travel_date: string | null
+  group_size: number | null
+  admin_comment: string | null
   status: LeadStatus
   source: string
   created_at: string

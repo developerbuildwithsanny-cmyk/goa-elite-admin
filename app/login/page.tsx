@@ -16,29 +16,14 @@ export default function AdminLoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    console.log('[Login] handleLogin started', { email })
     try {
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-      console.log('[Login] Supabase client config', {
-        url: supabaseUrl,
-        hasAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      })
-      
-      console.log('[Login] Calling signInWithPassword...')
       const response = await supabase.auth.signInWithPassword({ email, password })
-      console.log('[Login] signInWithPassword response received:', {
-        error: response.error,
-        user: response.data?.user ? { id: response.data.user.id, email: response.data.user.email } : null,
-        sessionExists: !!response.data?.session,
-      })
 
       const { error: authError } = response
       if (authError) {
-        console.error('[Login] Authentication failed:', authError)
         setError(authError.message || 'Invalid credentials. Please try again.')
         setLoading(false)
       } else {
-        console.log('[Login] Authentication successful. Redirecting to dashboard...')
         router.push('/')
       }
     } catch (err: any) {
