@@ -12,8 +12,39 @@ const STATUS_OPTIONS = [
   { value: 'time_waste', label: 'Time Waste', color: 'bg-gray-700 text-gray-300' },
   { value: 'dnp', label: 'DNP', color: 'bg-yellow-900 text-yellow-300' },
   { value: 'irrelevant', label: 'Irrelevant', color: 'bg-orange-900 text-orange-300' },
-  { value: 'wrong_contact', label: 'Wrong Contact', color: 'bg-red-900 text-red-300' },
 ]
+
+function parseLeadMessage(lead: Lead) {
+  let travel_date = lead.travel_date || null
+  let group_size = lead.group_size != null ? String(lead.group_size) : null
+  let admin_comment = lead.admin_comment || null
+  let cleanMessage = lead.message || ''
+
+  if (cleanMessage) {
+    const dateMatch = cleanMessage.match(/\[Travel Date:\s*([^\]|]+)/i)
+    if (dateMatch && !travel_date) {
+      travel_date = dateMatch[1].trim()
+    }
+
+    const paxMatch = cleanMessage.match(/Group Size:\s*([^\]|]+)/i)
+    if (paxMatch && !group_size) {
+      group_size = paxMatch[1].trim()
+    }
+
+    const commentMatch = cleanMessage.match(/\[Comment:\s*([^\]]+)\]/i)
+    if (commentMatch) {
+      admin_comment = commentMatch[1].trim()
+    }
+
+    cleanMessage = cleanMessage
+      .replace(/\[Travel Date:[^\]]+\]/gi, '')
+      .replace(/\[Group Size:[^\]]+\]/gi, '')
+      .replace(/\[Comment:[^\]]+\]/gi, '')
+      .trim()
+  }
+
+  return { travel_date, group_size, admin_comment, cleanMessage }
+}
 
 export default function AdminDashboard() {
   const [leads, setLeads] = useState<Lead[]>([])
@@ -30,16 +61,16 @@ export default function AdminDashboard() {
   const [savingComment, setSavingComment] = useState<string | null>(null)
   const router = useRouter()
 
-
   const fetchLeads = useCallback(async () => {
     setLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('leads')
-        .select('*')
-        .order('created_at', { ascending: false })
-      
-      if (!error) setLeads(data ?? [])
+      const res = await fetch('/api/leads')
+      const json = await res.json()
+      if (res.ok && json.leads) {
+        setLeads(json.leads)
+      } else {
+        console.error('[AdminDashboard] fetchLeads error:', json.error)
+      }
     } catch (err) {
       console.error('[AdminDashboard] fetchLeads exception:', err)
     }
@@ -127,13 +158,24 @@ export default function AdminDashboard() {
   }
 
   const updateStatus = async (id: string, status: string) => {
-    await supabase.from('leads').update({ status }).eq('id', id)
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, status: status as Lead['status'] } : l)))
+    try {
+      const res = await fetch('/api/leads', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status }),
+      })
+      if (res.ok) {
+        setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, status: status as Lead['status'] } : l)))
+      }
+    } catch (err) {
+      console.error('[AdminDashboard] updateStatus error:', err)
+    }
   }
 
   const startEditComment = (lead: Lead) => {
+    const parsed = parseLeadMessage(lead)
     setEditingComment(lead.id)
-    setCommentDraft(lead.admin_comment ?? '')
+    setCommentDraft(parsed.admin_comment ?? '')
   }
 
   const cancelComment = () => {
@@ -143,23 +185,47 @@ export default function AdminDashboard() {
 
   const saveComment = async (id: string) => {
     setSavingComment(id)
-    await supabase.from('leads').update({ admin_comment: commentDraft || null }).eq('id', id)
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, admin_comment: commentDraft || null } : l)))
-    setEditingComment(null)
-    setCommentDraft('')
-    setSavingComment(null)
+    try {
+      const res = await fetch('/api/leads', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, admin_comment: commentDraft || null }),
+      })
+      if (res.ok) {
+        setLeads((prev) =>
+          prev.map((l) => {
+            if (l.id !== id) return l
+            let msg = l.message || ''
+            msg = msg.replace(/\s*\[Comment:[^\]]+\]/gi, '').trim()
+            if (commentDraft && commentDraft.trim()) {
+              msg = msg ? `${msg} [Comment: ${commentDraft.trim()}]` : `[Comment: ${commentDraft.trim()}]`
+            }
+            return { ...l, message: msg || null }
+          })
+        )
+      }
+    } catch (err) {
+      console.error('[AdminDashboard] saveComment error:', err)
+    } finally {
+      setEditingComment(null)
+      setCommentDraft('')
+      setSavingComment(null)
+    }
   }
 
   const exportCSV = () => {
     const headers = ['Name', 'Phone', 'Alt Phone', 'Service', 'Travel Date', 'Group Size', 'Message', 'Admin Comment', 'Status', 'Date']
-    const rows = filtered.map((l) => [
-      l.name, l.phone, l.alt_phone ?? '', l.service,
-      l.travel_date ?? '', l.group_size ?? '',
-      (l.message ?? '').replace(/,/g, ';'),
-      (l.admin_comment ?? '').replace(/,/g, ';'),
-      l.status,
-      new Date(l.created_at).toLocaleDateString('en-IN'),
-    ])
+    const rows = filtered.map((l) => {
+      const parsed = parseLeadMessage(l)
+      return [
+        l.name, l.phone, l.alt_phone ?? '', l.service,
+        parsed.travel_date ?? '', parsed.group_size ?? '',
+        (parsed.cleanMessage ?? '').replace(/,/g, ';'),
+        (parsed.admin_comment ?? '').replace(/,/g, ';'),
+        l.status,
+        new Date(l.created_at).toLocaleDateString('en-IN'),
+      ]
+    })
     const csv = [headers, ...rows].map((r) => r.join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
@@ -206,16 +272,16 @@ export default function AdminDashboard() {
 
       <div className="p-6 space-y-6">
         {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
           {[
             { label: 'Total Leads', value: stats.total, color: 'text-white' },
             { label: '🔥 Hot Leads', value: stats.hot, color: 'text-green-400' },
             { label: 'New Today', value: stats.today, color: 'text-[#c9a84c]' },
             { label: 'Unworked', value: stats.newCount, color: 'text-blue-400' },
           ].map((s) => (
-            <div key={s.label} className="bg-[#111] border border-white/10 rounded-xl p-5">
-              <p className="text-gray-500 text-xs mb-1">{s.label}</p>
-              <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
+            <div key={s.label} className="bg-[#111] border border-white/10 rounded-lg sm:rounded-xl p-2.5 sm:p-5">
+              <p className="text-gray-500 text-[10px] sm:text-xs mb-0.5 sm:mb-1 truncate">{s.label}</p>
+              <p className={`text-lg sm:text-3xl font-bold ${s.color}`}>{s.value}</p>
             </div>
           ))}
         </div>
@@ -234,14 +300,15 @@ export default function AdminDashboard() {
             />
           </div> */}
 
-          {/* All filters in one row — explicit equal height on every control */}
-          <div className="flex flex-wrap items-center gap-2">
+          {/* All filters in one row — scrollable horizontally on mobile */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none" style={{ scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
 
             {/* Status */}
             <select
               id="admin-status-filter"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
+              className="shrink-0"
               style={{
                 height: '40px',
                 background: '#1a1a1a',
@@ -269,6 +336,7 @@ export default function AdminDashboard() {
               id="admin-service-filter"
               value={serviceFilter}
               onChange={(e) => setServiceFilter(e.target.value)}
+              className="shrink-0"
               style={{
                 height: '40px',
                 background: '#1a1a1a',
@@ -292,10 +360,10 @@ export default function AdminDashboard() {
             </select>
 
             {/* Divider */}
-            <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)' }} />
+            <div className="shrink-0" style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)' }} />
 
             {/* From date */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className="shrink-0" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>From</span>
               <input
                 id="admin-date-from"
@@ -318,7 +386,7 @@ export default function AdminDashboard() {
             </div>
 
             {/* To date */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className="shrink-0" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '12px', color: '#888', whiteSpace: 'nowrap' }}>To</span>
               <input
                 id="admin-date-to"
@@ -344,6 +412,7 @@ export default function AdminDashboard() {
             {hasDateFilter && (
               <button
                 id="admin-clear-dates"
+                className="shrink-0"
                 onClick={() => { setDateFrom(''); setDateTo('') }}
                 style={{
                   height: '40px',
@@ -404,8 +473,11 @@ export default function AdminDashboard() {
                   <tr><td colSpan={10} className="text-center py-16 text-gray-500">Loading leads…</td></tr>
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={10} className="text-center py-16 text-gray-500">No leads found</td></tr>
-                ) : paginatedLeads.map((lead, index) => (
-                  <tr key={lead.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors align-top">
+                ) : (
+                  paginatedLeads.map((lead, index) => {
+                    const parsed = parseLeadMessage(lead)
+                    return (
+                    <tr key={lead.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors align-top">
                     <td className="px-4 py-3 text-gray-500 font-mono text-xs">
                       {startIndex + index + 1}
                     </td>
@@ -430,21 +502,21 @@ export default function AdminDashboard() {
                     {/* Travel Date + Group Size */}
                     <td className="px-4 py-3 text-xs">
                       <div className="space-y-1">
-                        {lead.travel_date ? (
+                        {parsed.travel_date ? (
                           <div className="text-gray-300 whitespace-nowrap">
-                            📅 {new Date(lead.travel_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            📅 {parsed.travel_date}
                           </div>
                         ) : (
                           <span className="text-gray-600">—</span>
                         )}
-                        {lead.group_size && (
-                          <div className="text-gray-400">👥 {lead.group_size} pax</div>
+                        {parsed.group_size && (
+                          <div className="text-gray-400">👥 {parsed.group_size} pax</div>
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-gray-400 text-xs max-w-xs">
-                      <span title={lead.message ?? ''} className="truncate block max-w-[180px]">
-                        {lead.message || '—'}
+                      <span title={parsed.cleanMessage || ''} className="truncate block max-w-[180px]">
+                        {parsed.cleanMessage || '—'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">
@@ -499,10 +571,10 @@ export default function AdminDashboard() {
                           className="group cursor-pointer rounded-lg px-2 py-1.5 hover:bg-white/5 transition-colors min-h-[36px] flex items-start gap-2"
                           title="Click to edit comment"
                         >
-                          {lead.admin_comment ? (
+                          {parsed.admin_comment ? (
                             <>
                               <MessageSquare size={11} className="text-[#c9a84c] shrink-0 mt-0.5" />
-                              <span className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap break-words">{lead.admin_comment}</span>
+                              <span className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap break-words">{parsed.admin_comment}</span>
                             </>
                           ) : (
                             <span className="text-xs text-gray-700 group-hover:text-gray-500 transition-colors italic">+ Add comment</span>
@@ -528,7 +600,9 @@ export default function AdminDashboard() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })
+              )}
               </tbody>
             </table>
           </div>
